@@ -1,0 +1,42 @@
+# Prometheus Configuration
+# Scraping de métricas da aplicação, Actuator, JVM e OTel Collector
+
+global:
+  scrape_interval: 15s          # Coleta métricas a cada 15s
+  evaluation_interval: 15s      # Avalia alertas a cada 15s
+  scrape_timeout: 10s
+
+# Carrega regras de alerta
+rule_files:
+  - "alert-rules.yml"
+
+scrape_configs:
+
+  # ─── Aplicação Spring Boot (Micrometer Prometheus) ───────────────────────
+  - job_name: facturacao-ms-core
+    metrics_path: /facturacao-ms-core/actuator/prometheus
+    scrape_interval: 15s
+    static_configs:
+      - targets:
+          - facturacao-ms-core:9093    # Container no docker-compose
+        labels:
+          service: facturacao-ms-core
+          environment: dev
+
+  # ─── OTel Collector (métricas do próprio collector) ──────────────────────
+  - job_name: otel-collector
+    metrics_path: /metrics
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - otel-collector:8889
+        labels:
+          service: otel-collector
+
+  # ─── Prometheus self-monitoring ──────────────────────────────────────────
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090
+        labels:
+          service: prometheus

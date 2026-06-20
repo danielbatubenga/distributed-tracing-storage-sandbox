@@ -1,0 +1,285 @@
+version: "3.9"
+
+# Stack de Observabilidade - AGT Facturação MS Core
+#
+# Uso:
+#   docker compose -f docs/observability/docker-compose.observability.yml up -d --build
+#
+# Para subir só a infra (sem a app):
+#   docker compose -f docs/observability/docker-compose.observability.yml up -d \
+#     otel-collector tempo loki promtail prometheus grafana
+#
+# Ficheiros de configuração necessários (relativos a este ficheiro):
+#   ./otel-collector-config.yaml
+#   ./tempo.yaml
+#   ./loki-config.yaml
+#   ./promtail-config.yaml
+#   ./prometheus.yml
+#   ./alert-rules.yml
+#   ./grafana/provisioning/
+#   ./grafana/dashboards/
+#
+# Dockerfile da app:
+#   ../../Dockerfile.dev  (raiz do projecto)
+
+networks:
+  observability:
+    driver: bridge
+
+volumes:
+  grafana-data:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+#  oracle-data:
+#  mongodb-data:
+
+services:
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # APLICAÇÃO
+  # Spring Boot + OTel Java Agent
+  # ══════════════════════════════════════════════════════════════════════════
+#  facturacao-ms-core:
+#    build:
+#      context: ../../          # Raiz do projecto (onde está o Dockerfile.dev)
+#      dockerfile: Dockerfile.dev
+#    container_name: teste
+#    restart: unless-stopped
+#    labels:
+#      # Label necessária para o Promtail descobrir este container
+#      logging: "promtail"
+#      app: "app"
+#      env: "dev"
+#    ports:
+#      - "9093:9093"
+#    environment:
+#      # ── Spring ──────────────────────────────────────────────────────────
+#      SPRING_PROFILES_ACTIVE: dev
+#      # ── OpenTelemetry (sobrepõem os valores do Dockerfile.dev) ──────────
+#      OTEL_SERVICE_NAME: facturacao-ms-core
+#      # http/protobuf (OkHttp) na porta 4318 — compatível com o Java Agent
+#      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+#      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+#      OTEL_EXPORTER_OTLP_COMPRESSION: gzip
+#      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=dev,service.version=dev"
+#      OTEL_TRACES_SAMPLER: parentbased_always_on
+#
+#     # Desactiva exportadores desnecessários em dev
+#      OTEL_METRICS_EXPORTER: none     # Métricas via Micrometer/Prometheus
+#      OTEL_LOGS_EXPORTER: none        # Logs via Logback/Loki
+#      # ── Spring Boot Tracing ─────────────────────────────────────────────
+#      MANAGEMENT_TRACING_SAMPLING_PROBABILITY: "1.0"
+#      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://otel-collector:4318/v1/traces
+#
+#    networks:
+#      - observability
+#    depends_on:
+#      otel-collector:
+#        condition: service_started
+#    healthcheck:
+#      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/facturacao-ms-core/actuator/health"]
+#      interval: 30s
+#      timeout: 10s
+#      retries: 5
+#      start_period: 60s    # Dá tempo ao Spring Boot para iniciar
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # INFRA DE OBSERVABILIDADE
+  # ══════════════════════════════════════════════════════════════════════════
+
+  # ──────────────────────────────────────────────────
+  # OpenTelemetry Collector
+  # Recebe traces/metrics OTLP e roteia para Tempo/Prometheus
+  # ──────────────────────────────────────────────────
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.121.0
+    container_name: otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otel/otel-collector-config.yaml"]
+    volumes:
+      - ./otl-collector/otel-collector-config.yaml:/etc/otel/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"   # OTLP gRPC (recebe traces da app)
+      - "4318:4318"   # OTLP HTTP
+      - "8889:8889"   # Prometheus metrics (do próprio collector)
+    networks:
+      - observability
+    depends_on:
+      tempo:
+        condition: service_healthy
+    # A imagem distroless não tem shell/wget — healthcheck removido.
+    # O OTel SDK da app faz retry automático à ligação gRPC.
+
+  # ──────────────────────────────────────────────────
+  # Grafana Tempo - Distributed Tracing
+  # ──────────────────────────────────────────────────
+  tempo:
+    image: grafana/tempo:2.7.2
+    container_name: tempo
+    restart: unless-stopped
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "3200:3200"   # Tempo HTTP API (Grafana datasource)
+    networks:
+      - observability
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ──────────────────────────────────────────────────
+  # MinIO - Object Storage (arquivo de logs > 2h)
+  # Console: http://localhost:9001  user: minioadmin / minioadmin
+  # ──────────────────────────────────────────────────
+  #minio:
+  #  image: minio/minio:RELEASE.2024-11-07T00-52-20Z
+  #  container_name: minio
+  #  restart: unless-stopped
+  #  command: server /data --console-address ":9001"
+  #  environment:
+  #    MINIO_ROOT_USER: minioadmin
+  #    MINIO_ROOT_PASSWORD: minioadmin
+  #  volumes:
+  #    - minio-data:/data
+  #  ports:
+  #    - "9000:9000"   # S3 API
+  #    - "9001:9001"   # Console Web
+  #  networks:
+  #    - observability
+  #  healthcheck:
+  #    test: ["CMD", "mc", "ready", "local"]
+  #    interval: 10s
+  #    timeout: 5s
+  #    retries: 5
+
+  # Cria o bucket "loki" no MinIO na primeira execução
+  #minio-init:
+  #  image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+  #  container_name: minio-init
+  #  depends_on:
+  #    minio:
+  #      condition: service_healthy
+  #  networks:
+  #    - observability
+  #  entrypoint: >
+  #    /bin/sh -c "
+  #      mc alias set local http://minio:9000 minioadmin minioadmin;
+  #      mc mb --ignore-existing local/loki;
+  #      mc mb --ignore-existing local/tempo;
+  #      echo 'Buckets loki e tempo prontos.';
+  #    "
+
+  # ──────────────────────────────────────────────────
+  # Grafana Loki - Log Aggregation
+  # ──────────────────────────────────────────────────
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: loki
+    restart: unless-stopped
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./loki/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "3100:3100"
+    networks:
+      - observability
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # ──────────────────────────────────────────────────
+  # Promtail - Log Shipper
+  # Descobre containers com label "logging=promtail"
+  # e envia os logs JSON para o Loki
+  # ──────────────────────────────────────────────────
+  promtail:
+    image: grafana/promtail:3.0.0
+    container_name: promtail
+    restart: unless-stopped
+    command: ["-config.file=/etc/promtail/promtail-config.yaml"]
+    volumes:
+      - ./promtail/promtail-config.yaml:/etc/promtail/promtail-config.yaml:ro
+      # Socket Docker para descoberta automática de containers
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - observability
+    depends_on:
+      loki:
+        condition: service_healthy
+
+  # ──────────────────────────────────────────────────
+  # Prometheus - Metrics
+  # ──────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:v3.3.1
+    container_name: prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=15d"
+      - "--web.enable-lifecycle"
+      - "--web.enable-admin-api"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alert-rules.yml:/etc/prometheus/alert-rules.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - observability
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────
+  # Grafana - Dashboards e Alertas
+  # ──────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:11.6.1
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_FEATURE_TOGGLES_ENABLE=traceqlEditor
+      - GF_EXPLORE_ENABLED=true
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    ports:
+      - "3000:3000"
+    networks:
+      - observability
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+  
+  

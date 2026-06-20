@@ -1,0 +1,72 @@
+# OpenTelemetry Collector Configuration
+# Recebe traces da aplicação via OTLP e exporta para Tempo e Prometheus
+
+receivers:
+  # Recebe traces/metrics/logs via OTLP (gRPC e HTTP)
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # Limita uso de memória — evita OOM em picos de carga
+  memory_limiter:
+    check_interval: 5s
+    limit_mib: 400
+    spike_limit_mib: 100
+
+  # Agrupa spans em batches para reduzir chamadas de rede
+  batch:
+    send_batch_size: 1000
+    timeout: 5s
+    send_batch_max_size: 1500
+
+  # Adiciona atributos de recurso a todos os dados
+  resource:
+    attributes:
+      - key: collector.name
+        value: "agt-otel-collector"
+        action: insert
+
+exporters:
+  # Exporta traces para Grafana Tempo via OTLP gRPC
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+
+  # Expõe métricas do collector para o Prometheus fazer scraping
+  prometheus:
+    endpoint: "0.0.0.0:8889"
+    namespace: otelcol
+
+  # Log dos traces no console do collector (debug, desabilitar em prod)
+  debug:
+    verbosity: normal
+
+extensions:
+  # Health check do próprio collector
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+  # Expõe pprof para diagnóstico de performance
+  pprof:
+    endpoint: 0.0.0.0:1777
+
+service:
+  extensions: [health_check, pprof]
+
+  pipelines:
+    # Pipeline de traces: OTLP → batch → Tempo
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo, debug]
+
+    # Pipeline de métricas: OTLP → batch → Prometheus
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]

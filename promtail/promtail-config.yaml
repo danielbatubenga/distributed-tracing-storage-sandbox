@@ -1,0 +1,83 @@
+# Promtail Configuration
+# Coleta logs dos containers Docker e envia para Loki
+# Os logs JSON do Logback (logstash-logback-encoder) são parseados e indexados
+
+server:
+  http_listen_port: 9080
+  grpc_listen_port: 0
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+
+  # ─── Logs dos containers Docker ──────────────────────────────────────────
+  # Coleta todos os containers e aplica pipeline de parsing JSON
+  - job_name: docker-containers
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 5s
+        filters:
+          # Coleta apenas containers com a label "logging=promtail"
+          # (adicionada no docker-compose do serviço da app)
+          - name: label
+            values: ["logging=promtail"]
+
+    relabel_configs:
+      # Usa o nome do container como label "container"
+      - source_labels: [__meta_docker_container_name]
+        regex: "/(.*)"
+        target_label: container
+
+      # Usa a imagem como label "image"
+      - source_labels: [__meta_docker_container_image_name]
+        target_label: image
+
+      # Usa labels Docker como labels Loki
+      - source_labels: [__meta_docker_container_label_app]
+        target_label: app
+
+      - source_labels: [__meta_docker_container_label_env]
+        target_label: env
+
+    pipeline_stages:
+
+      # ── Parse JSON do log Logstash-Logback-Encoder ──────────────────────
+      # O logstash-logback-encoder emite JSON com campos: level, message,
+      # logger_name, thread_name, traceId, spanId, requestId, nif, etc.
+      - json:
+          expressions:
+            level: level
+            logger: logger_name
+            message: message
+            traceId: traceId
+            spanId: spanId
+            requestId: requestId
+            nif: nif
+            documentType: documentType
+            seriesCode: seriesCode
+            app: app
+            env: env
+            stack_trace: stack_trace
+
+      # ── Promoção de campos para labels Loki ─────────────────────────────
+      # IMPORTANTE: Usar POUCOS labels em Loki (baixa cardinalidade).
+      # Campos de alta cardinalidade (traceId, nif, seriesCode) ficam no
+      # corpo do log e são pesquisados com filtros de linha (|= "valor").
+      - labels:
+          level:        # Nível: INFO, WARN, ERROR, DEBUG
+          app:          # Nome da aplicação: facturacao-ms-core
+          env:          # Ambiente: dev, qld, prod
+          container:    # Nome do container Docker
+
+      # ── Drop de logs muito verbosos ─────────────────────────────────────
+      # Elimina logs de health checks do actuator para não poluir o Loki
+      - drop:
+          expression: ".*actuator/health.*"
+
+      # A etapa de output foi removida para PRESERVAR o log original em JSON.
+      # Assim, o Grafana pode aplicar o pipe `| json` no painel de logs e 
+      # ler corretamente todas as variáveis como {{.nif}} e {{.traceId}}.
