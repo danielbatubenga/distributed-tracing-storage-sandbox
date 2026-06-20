@@ -36,9 +36,13 @@ metrics_generator:
 
 storage:
   trace:
-    backend: local
-    local:
-      path: /var/tempo/traces
+    backend: s3
+    s3:
+      bucket: tempo-traces
+      endpoint: 192.168.179.135:9000
+      access_key: minioadmin
+      secret_key: minioadmin
+      insecure: true
     wal:
       path: /var/tempo/wal
 

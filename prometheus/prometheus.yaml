@@ -13,14 +13,14 @@ rule_files:
 scrape_configs:
 
   # ─── Aplicação Spring Boot (Micrometer Prometheus) ───────────────────────
-  - job_name: facturacao-ms-core
-    metrics_path: /facturacao-ms-core/actuator/prometheus
+  - job_name: java-app
+    metrics_path: /app/actuator/prometheus
     scrape_interval: 15s
     static_configs:
       - targets:
-          - facturacao-ms-core:9093    # Container no docker-compose
+          - java-app:9093    # Container no docker-compose
         labels:
-          service: facturacao-ms-core
+          service: java-app
           environment: dev
 
   # ─── OTel Collector (métricas do próprio collector) ──────────────────────
