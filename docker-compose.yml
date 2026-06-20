@@ -31,7 +31,7 @@ volumes:
   prometheus-data:
   loki-data:
   tempo-data:
-  minio-data:
+#  minio-data:
 #  oracle-data:
 #  mongodb-data:
 
@@ -127,9 +127,6 @@ services:
       - "3200:3200"   # Tempo HTTP API (Grafana datasource)
     networks:
       - observability
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
       interval: 10s
@@ -192,9 +189,6 @@ services:
       - "3100:3100"
     networks:
       - observability
-    depends_on:
-      minio-init:
-        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
       interval: 10s
