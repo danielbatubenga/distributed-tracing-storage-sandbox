@@ -39,8 +39,12 @@ storage_config:
     active_index_directory: /loki/index
     cache_location: /loki/index_cache
   aws:
-    s3: http://minioadmin:minioadmin@minio:9000/loki
-    s3forcepathstyle: true   # obrigatório para MinIO (path-style)
+    endpoint: 192.168.179.135:9000
+    access_key_id: minioadmin
+    secret_access_key: minioadmin
+    bucketnames: loki-logs
+    insecure: true            # HTTP sem TLS
+    s3forcepathstyle: true    # obrigatório para MinIO (path-style)
 
 # Limites de ingestão
 limits_config:
